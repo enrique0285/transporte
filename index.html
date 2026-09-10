@@ -129,7 +129,7 @@
 </main>
 
 <script>
-const ORS_GEOCODE = 'https://api.heigit.org/pelias/v1/search';
+const ORS_GEOCODE = 'https://api.openrouteservice.org/geocode/search';
 const el = id => document.getElementById(id);
 const statusEl = el('status');
 const status2El = el('status2');
@@ -256,8 +256,8 @@ function getDisponibilidadActual() {
 // --- Geocodificación con caché (por dirección completa, más fiable que el CP en España) ---
 async function geocodeDireccion(direccion, apiKey) {
   if (geocodeCache[direccion]) return geocodeCache[direccion];
-  const url = `${ORS_GEOCODE}?text=${encodeURIComponent(direccion)}&size=1&boundary.country=ES`;
-  const res = await fetch(url, { headers: { 'Authorization': apiKey } });
+  const url = `${ORS_GEOCODE}?api_key=${encodeURIComponent(apiKey)}&text=${encodeURIComponent(direccion)}&size=1&boundary.country=ES`;
+  const res = await fetch(url);
   if (!res.ok) {
     const cuerpo = await res.text().catch(() => '(sin cuerpo)');
     throw new Error(`Geocodificación falló para "${direccion}" — HTTP ${res.status}: ${cuerpo.slice(0, 300)}`);
@@ -528,4 +528,5 @@ loadConfig();
 
 </body>
 </html>
+
 
