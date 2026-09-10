@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -81,10 +80,6 @@
     <h2>Configuración</h2>
     <div class="config-grid">
       <div class="field">
-        <label>Clave API de OpenRouteService (geocodificación)</label>
-        <input type="password" id="orsKey" placeholder="Tu API key">
-      </div>
-      <div class="field">
         <label>URL raw del Gist — gsh-flota.json</label>
         <input type="text" id="flotaUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-flota.json">
       </div>
@@ -135,7 +130,7 @@
 </main>
 
 <script>
-const ORS_GEOCODE = 'https://api.heigit.org/pelias/v1/search';
+const ORS_GEOCODE = 'https://nominatim.openstreetmap.org/search';
 const el = id => document.getElementById(id);
 const statusEl = el('status');
 const status2El = el('status2');
@@ -152,7 +147,6 @@ const DIAS_NOMBRE = { L: 'Lunes', M: 'Martes', X: 'Miércoles', J: 'Jueves', V: 
 
 // --- Config persistida (solo lo estable: keys y URLs, no la disponibilidad) ---
 function loadConfig() {
-  el('orsKey').value = localStorage.getItem('gsh_ors_key') || '';
   el('flotaUrl').value = localStorage.getItem('gsh_flota_url') || '';
   el('pedidosUrl').value = localStorage.getItem('gsh_pedidos_url') || '';
   el('webhookUrl').value = localStorage.getItem('gsh_planif_webhook') || '';
@@ -160,7 +154,6 @@ function loadConfig() {
   el('lunesSemana').value = proximoLunes();
 }
 function saveConfig() {
-  localStorage.setItem('gsh_ors_key', el('orsKey').value.trim());
   localStorage.setItem('gsh_flota_url', el('flotaUrl').value.trim());
   localStorage.setItem('gsh_pedidos_url', el('pedidosUrl').value.trim());
   localStorage.setItem('gsh_planif_webhook', el('webhookUrl').value.trim());
@@ -260,18 +253,19 @@ function getDisponibilidadActual() {
 }
 
 // --- Geocodificación con caché (por dirección completa, más fiable que el CP en España) ---
-async function geocodeDireccion(direccion, apiKey) {
+async function geocodeDireccion(direccion) {
   if (geocodeCache[direccion]) return geocodeCache[direccion];
-  const url = `${ORS_GEOCODE}?text=${encodeURIComponent(direccion)}&size=1&boundary.country=ES`;
-  const res = await fetch(url, { headers: { 'Authorization': apiKey } });
+  const url = `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(direccion)}&countrycodes=es&limit=1`;
+  const res = await fetch(url);
   if (!res.ok) {
     const cuerpo = await res.text().catch(() => '(sin cuerpo)');
     throw new Error(`Geocodificación falló para "${direccion}" — HTTP ${res.status}: ${cuerpo.slice(0, 300)}`);
   }
   const data = await res.json();
-  if (!data.features || !data.features.length) throw new Error(`No se encontró la dirección: "${direccion}"`);
-  const [lon, lat] = data.features[0].geometry.coordinates;
-  const label = data.features[0].properties?.label || direccion;
+  if (!data.length) throw new Error(`No se encontró la dirección: "${direccion}"`);
+  const lon = parseFloat(data[0].lon);
+  const lat = parseFloat(data[0].lat);
+  const label = data[0].display_name || direccion;
   const result = { coord: [lon, lat], label };
   geocodeCache[direccion] = result;
   return result;
@@ -310,8 +304,6 @@ function bearingPromedio(pedidosCluster) {
 
 // --- Cálculo de la propuesta ---
 async function calcularPropuesta() {
-  const apiKey = el('orsKey').value.trim();
-  if (!apiKey) { setStatus2('Falta la clave API de OpenRouteService.', 'err'); return; }
   if (!pedidos.length) { setStatus2('No hay pedidos cargados.', 'err'); return; }
 
   const lunes = new Date(el('lunesSemana').value + 'T00:00:00');
@@ -325,16 +317,18 @@ async function calcularPropuesta() {
 
   try {
     const origenDireccion = el('origenDireccion').value.trim() || 'Consuegra, Toledo, España';
-    const gOrigen = await geocodeDireccion(origenDireccion, apiKey);
+    const gOrigen = await geocodeDireccion(origenDireccion);
     const depotCoord = gOrigen.coord;
+    await new Promise(r => setTimeout(r, 1100)); // Nominatim: máx. 1 petición/seg
 
     setStatus2('Geocodificando direcciones...');
     // Geocodificar todos los pedidos
     for (let i = 0; i < pedidos.length; i++) {
       setStatus2(`Geocodificando ${i + 1}/${pedidos.length}...`);
-      const g = await geocodeDireccion(pedidos[i].direccion, apiKey);
+      const g = await geocodeDireccion(pedidos[i].direccion);
       pedidos[i]._coord = g.coord;
       pedidos[i]._label = g.label;
+      if (i < pedidos.length - 1) await new Promise(r => setTimeout(r, 1100));
     }
 
     // Calcular ventana elegible (días hábiles) por pedido
@@ -544,6 +538,7 @@ loadConfig();
 
 </body>
 </html>
+
 
 
 
