@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planificación Semanal de Rutas — GSH</title>
+<style>
+  :root {
+    --brand: #3b2a1f;
+    --brand-light: #6f4e37;
+    --accent: #c8a165;
+    --bg: #f6f3ef;
+    --card: #ffffff;
+    --border: #e2dcd3;
+    --text: #2b241d;
+    --muted: #7a7166;
+    --ok: #3a7d44;
+    --warn: #b8863b;
+    --err: #b3402f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--brand); color: #fff; padding: 16px 20px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  main { max-width: 1300px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 800px) { .config-grid { grid-template-columns: 1fr; } }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=date] {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px;
+  }
+  .field { margin-bottom: 8px; }
+  .row-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  button { background: var(--brand); color: #fff; border: none; padding: 10px 18px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; }
+  button:hover { background: var(--brand-light); }
+  button.secondary { background: transparent; color: var(--brand); border: 1px solid var(--border); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+
+  .avail-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; align-items: center; font-size: 13px; }
+  .avail-grid .head { font-weight: 600; color: var(--muted); font-size: 12px; }
+  .avail-grid label.chk { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text); margin: 0; }
+
+  .calendar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  @media (max-width: 900px) { .calendar { grid-template-columns: 1fr; } }
+  .day-col { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-height: 120px; }
+  .day-col h3 { margin: 0 0 8px; font-size: 13px; text-transform: capitalize; color: var(--brand); }
+  .vehicle-block { margin-bottom: 10px; }
+  .vehicle-block .vname { font-size: 12px; font-weight: 600; color: var(--muted); display: flex; justify-content: space-between; }
+  .capacity-bar { height: 5px; border-radius: 3px; background: var(--border); margin: 4px 0 6px; overflow: hidden; }
+  .capacity-bar > div { height: 100%; background: var(--accent); }
+  .capacity-bar.full > div { background: var(--err); }
+  .pedido-card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; font-size: 12px; }
+  .pedido-card .cli { font-weight: 600; }
+  .pedido-card .meta { color: var(--muted); }
+  .pedido-card select { width: 100%; font-size: 11px; margin-top: 4px; padding: 3px; border-radius: 4px; border: 1px solid var(--border); }
+
+  .sin-encajar { border: 1px solid var(--err); background: #fdf3f1; border-radius: 8px; padding: 10px; }
+  .sin-encajar .pedido-card { border-color: var(--err); }
+
+  .summary-line { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<header><h1>📅 Planificación Semanal de Rutas — GSH</h1></header>
+
+<main>
+
+  <div class="card">
+    <h2>Configuración</h2>
+    <div class="config-grid">
+      <div class="field">
+        <label>Clave API de OpenRouteService (geocodificación)</label>
+        <input type="password" id="orsKey" placeholder="Tu API key">
+      </div>
+      <div class="field">
+        <label>URL raw del Gist — gsh-flota.json</label>
+        <input type="text" id="flotaUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-flota.json">
+      </div>
+      <div class="field">
+        <label>URL raw del Gist — gsh-planificacion-semana.json</label>
+        <input type="text" id="pedidosUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-planificacion-semana.json">
+      </div>
+      <div class="field">
+        <label>URL del webhook de confirmación (opcional, Power Automate)</label>
+        <input type="text" id="webhookUrl" placeholder="Déjalo vacío para probar sin conectar a la List">
+      </div>
+      <div class="field">
+        <label>Dirección de origen (almacén, siempre sale de aquí)</label>
+        <input type="text" id="origenDireccion" placeholder="Consuegra, Toledo, España">
+      </div>
+      <div class="field">
+        <label>Lunes de la semana a planificar</label>
+        <input type="date" id="lunesSemana">
+      </div>
+    </div>
+    <div class="row-actions">
+      <button id="cargarBtn">Cargar datos</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <div class="card" id="availCard" style="display:none;">
+    <h2>Disponibilidad de flota esta semana (excepciones)</h2>
+    <div class="summary-line">Precargado con el patrón normal del Gist. Desmarca lo que no aplique esta semana concreta — no se guarda, es solo para este cálculo.</div>
+    <div class="avail-grid" id="availGrid"></div>
+  </div>
+
+  <div class="card" id="calcCard" style="display:none;">
+    <div class="row-actions" style="margin-bottom: 10px;">
+      <button id="calcularBtn">Calcular propuesta</button>
+      <button class="secondary" id="confirmarBtn" disabled>Confirmar semana</button>
+      <span id="status2"></span>
+    </div>
+    <h2>Propuesta de calendario</h2>
+    <div class="calendar" id="calendar"></div>
+  </div>
+
+  <div class="card" id="sinEncajarCard" style="display:none;">
+    <h2>⚠️ Sin encajar — revisar a mano</h2>
+    <div class="sin-encajar" id="sinEncajarList"></div>
+  </div>
+
+</main>
+
+<script>
+const ORS_GEOCODE = 'https://api.openrouteservice.org/geocode/search';
+const el = id => document.getElementById(id);
+const statusEl = el('status');
+const status2El = el('status2');
+
+let flota = null;
+let pedidos = [];
+let geocodeCache = {};
+let asignaciones = {}; // pedidoId -> { dia, vehiculoId }
+let sinEncajar = [];
+let calculado = false;
+
+const DIAS = ['L', 'M', 'X', 'J', 'V'];
+const DIAS_NOMBRE = { L: 'Lunes', M: 'Martes', X: 'Miércoles', J: 'Jueves', V: 'Viernes' };
+
+// --- Config persistida (solo lo estable: keys y URLs, no la disponibilidad) ---
+function loadConfig() {
+  el('orsKey').value = localStorage.getItem('gsh_ors_key') || '';
+  el('flotaUrl').value = localStorage.getItem('gsh_flota_url') || '';
+  el('pedidosUrl').value = localStorage.getItem('gsh_pedidos_url') || '';
+  el('webhookUrl').value = localStorage.getItem('gsh_planif_webhook') || '';
+  el('origenDireccion').value = localStorage.getItem('gsh_origen') || 'Consuegra, Toledo, España';
+  el('lunesSemana').value = proximoLunes();
+}
+function saveConfig() {
+  localStorage.setItem('gsh_ors_key', el('orsKey').value.trim());
+  localStorage.setItem('gsh_flota_url', el('flotaUrl').value.trim());
+  localStorage.setItem('gsh_pedidos_url', el('pedidosUrl').value.trim());
+  localStorage.setItem('gsh_planif_webhook', el('webhookUrl').value.trim());
+  localStorage.setItem('gsh_origen', el('origenDireccion').value.trim());
+}
+
+function proximoLunes() {
+  const hoy = new Date();
+  const dia = hoy.getDay(); // 0=domingo
+  const diasHastaLunes = (dia === 0) ? 1 : (8 - dia) % 7 || 7;
+  const lunes = new Date(hoy);
+  lunes.setDate(hoy.getDate() + (dia <= 1 ? diasHastaLunes : diasHastaLunes));
+  // Aseguramos que sea un lunes futuro (próxima semana natural)
+  const result = new Date(hoy);
+  const offset = (8 - dia) % 7;
+  result.setDate(hoy.getDate() + (offset === 0 ? 7 : offset));
+  return result.toISOString().slice(0, 10);
+}
+
+function setStatus(msg, type) { statusEl.textContent = msg; statusEl.className = type || ''; }
+function setStatus2(msg, type) { status2El.textContent = msg; status2El.className = type || ''; }
+
+// --- Fechas hábiles ---
+function esHabil(date) { const d = date.getDay(); return d !== 0 && d !== 6; }
+function restarDiasHabiles(date, n) {
+  const d = new Date(date);
+  let restantes = n;
+  while (restantes > 0) {
+    d.setDate(d.getDate() - 1);
+    if (esHabil(d)) restantes--;
+  }
+  return d;
+}
+function letraDia(date) { return ['D','L','M','X','J','V','S'][date.getDay()]; }
+
+// --- Carga de datos ---
+// Limpia caracteres invisibles (espacios de ancho cero, etc.) que a veces se cuelan al copiar enlaces en móvil
+function limpiarUrl(url) {
+  return url.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
+}
+
+async function cargarDatos() {
+  saveConfig();
+  const flotaUrl = limpiarUrl(el('flotaUrl').value);
+  const pedidosUrl = limpiarUrl(el('pedidosUrl').value);
+  if (!flotaUrl || !pedidosUrl) { setStatus('Faltan las URLs de los Gists.', 'err'); return; }
+
+  setStatus('Cargando flota...');
+  let flotaRes;
+  try {
+    flotaRes = await fetch(flotaUrl + '?cb=' + Date.now());
+  } catch (err) {
+    setStatus(`Error cargando FLOTA con esta URL: [${flotaUrl}] → ${err.message}`, 'err');
+    return;
+  }
+  if (!flotaRes.ok) { setStatus(`Flota: HTTP ${flotaRes.status} con URL [${flotaUrl}]`, 'err'); return; }
+
+  let pedidosRes;
+  try {
+    pedidosRes = await fetch(pedidosUrl + '?cb=' + Date.now());
+  } catch (err) {
+    setStatus(`Error cargando PEDIDOS con esta URL: [${pedidosUrl}] → ${err.message}`, 'err');
+    return;
+  }
+  if (!pedidosRes.ok) { setStatus(`Pedidos: HTTP ${pedidosRes.status} con URL [${pedidosUrl}]`, 'err'); return; }
+
+  try {
+    flota = (await flotaRes.json()).vehiculos;
+    pedidos = (await pedidosRes.json()).pedidos || [];
+    setStatus(`${flota.length} vehículo(s), ${pedidos.length} pedido(s) cargados.`, 'ok');
+    renderAvailGrid();
+    el('availCard').style.display = 'block';
+    el('calcCard').style.display = 'block';
+  } catch (err) {
+    setStatus('Error interpretando el JSON: ' + err.message, 'err');
+  }
+}
+
+function renderAvailGrid() {
+  const grid = el('availGrid');
+  grid.innerHTML = '<div class="head">Vehículo</div>' + DIAS.map(d => `<div class="head">${DIAS_NOMBRE[d]}</div>`).join('');
+  flota.forEach(v => {
+    grid.innerHTML += `<div>${v.tipo} (${v.id})</div>`;
+    DIAS.forEach(d => {
+      const marcado = v.diasDisponibles.includes(d);
+      grid.innerHTML += `<label class="chk"><input type="checkbox" data-veh="${v.id}" data-dia="${d}" ${marcado ? 'checked' : ''}></label>`;
+    });
+  });
+}
+
+function getDisponibilidadActual() {
+  const checks = document.querySelectorAll('#availGrid input[type=checkbox]');
+  const disponibilidad = {}; // vehiculoId -> [dias]
+  flota.forEach(v => disponibilidad[v.id] = []);
+  checks.forEach(c => { if (c.checked) disponibilidad[c.dataset.veh].push(c.dataset.dia); });
+  return disponibilidad;
+}
+
+// --- Geocodificación con caché (por dirección completa, más fiable que el CP en España) ---
+async function geocodeDireccion(direccion, apiKey) {
+  if (geocodeCache[direccion]) return geocodeCache[direccion];
+  const url = `${ORS_GEOCODE}?api_key=${encodeURIComponent(apiKey)}&text=${encodeURIComponent(direccion)}&size=1&boundary.country=ES`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocodificación falló para "${direccion}"`);
+  const data = await res.json();
+  if (!data.features || !data.features.length) throw new Error(`No se encontró la dirección: "${direccion}"`);
+  const [lon, lat] = data.features[0].geometry.coordinates;
+  const label = data.features[0].properties?.label || direccion;
+  const result = { coord: [lon, lat], label };
+  geocodeCache[direccion] = result;
+  return result;
+}
+
+function haversine([lon1, lat1], [lon2, lat2]) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Rumbo (0-360°) desde el depósito hasta un punto, como si fuera una brújula
+function bearingDeg([lon1, lat1], [lon2, lat2]) {
+  const toRad = d => d * Math.PI / 180;
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// Diferencia angular mínima entre dos rumbos (0-180°)
+function angularDiff(a, b) {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+// Rumbo medio de un conjunto de pedidos ya cargados en un vehículo (vector medio)
+function bearingPromedio(pedidosCluster) {
+  const suma = pedidosCluster.reduce((acc, p) => {
+    const rad = p._bearing * Math.PI / 180;
+    return { x: acc.x + Math.cos(rad), y: acc.y + Math.sin(rad) };
+  }, { x: 0, y: 0 });
+  return (Math.atan2(suma.y, suma.x) * 180 / Math.PI + 360) % 360;
+}
+
+// --- Cálculo de la propuesta ---
+async function calcularPropuesta() {
+  const apiKey = el('orsKey').value.trim();
+  if (!apiKey) { setStatus2('Falta la clave API de OpenRouteService.', 'err'); return; }
+  if (!pedidos.length) { setStatus2('No hay pedidos cargados.', 'err'); return; }
+
+  const lunes = new Date(el('lunesSemana').value + 'T00:00:00');
+  const fechasPorDia = {};
+  DIAS.forEach((d, i) => { const f = new Date(lunes); f.setDate(lunes.getDate() + i); fechasPorDia[d] = f; });
+
+  const disponibilidad = getDisponibilidadActual();
+
+  el('calcularBtn').disabled = true;
+  setStatus2('Geocodificando origen...');
+
+  try {
+    const origenDireccion = el('origenDireccion').value.trim() || 'Consuegra, Toledo, España';
+    const gOrigen = await geocodeDireccion(origenDireccion, apiKey);
+    const depotCoord = gOrigen.coord;
+
+    setStatus2('Geocodificando direcciones...');
+    // Geocodificar todos los pedidos
+    for (let i = 0; i < pedidos.length; i++) {
+      setStatus2(`Geocodificando ${i + 1}/${pedidos.length}...`);
+      const g = await geocodeDireccion(pedidos[i].direccion, apiKey);
+      pedidos[i]._coord = g.coord;
+      pedidos[i]._label = g.label;
+    }
+
+    // Calcular ventana elegible (días hábiles) por pedido
+    pedidos.forEach(p => {
+      const limite = new Date(p.fechaLimiteTransporte + 'T00:00:00');
+      const masTarde = restarDiasHabiles(limite, 1); // día antes
+      const masTemprano = restarDiasHabiles(limite, 2); // dos días antes
+      p._ventana = [masTemprano, masTarde];
+      p._bearing = bearingDeg(depotCoord, p._coord); // rumbo desde Consuegra
+    });
+
+    // Estructura de clusters: dia -> vehiculoId -> { pedidos: [], pallets: 0 }
+    const clusters = {};
+    DIAS.forEach(d => {
+      clusters[d] = {};
+      flota.forEach(v => { clusters[d][v.id] = { pedidos: [], pallets: 0 }; });
+    });
+
+    asignaciones = {};
+    const noAsignado = new Set(pedidos.map(p => p.pedidoId));
+
+    DIAS.forEach(d => {
+      const fecha = fechasPorDia[d];
+      const vehiculosHoy = flota.filter(v => disponibilidad[v.id] && disponibilidad[v.id].includes(d));
+      if (!vehiculosHoy.length) return;
+
+      const candidatosHoy = pedidos.filter(p =>
+        noAsignado.has(p.pedidoId) && fecha >= p._ventana[0] && fecha <= p._ventana[1]
+      );
+      // Tier 1: hoy es su último día posible (no pueden esperar más)
+      const tier1 = candidatosHoy.filter(p => fecha.getTime() === p._ventana[1].getTime());
+      // Tier 2: todavía tienen otro día disponible esta semana
+      const tier2 = candidatosHoy.filter(p => fecha.getTime() !== p._ventana[1].getTime());
+      tier1.sort((a, b) => a._bearing - b._bearing);
+      tier2.sort((a, b) => a._bearing - b._bearing);
+
+      // Fase 1: colocar los urgentes, barriendo por rumbo entre los vehículos disponibles hoy
+      let vIdx = 0;
+      tier1.forEach(p => {
+        let colocado = false;
+        for (let tries = 0; tries < vehiculosHoy.length && !colocado; tries++) {
+          const v = vehiculosHoy[(vIdx + tries) % vehiculosHoy.length];
+          const cluster = clusters[d][v.id];
+          if (cluster.pallets + p.palletsTotal <= v.capacidadPallets) {
+            cluster.pedidos.push(p);
+            cluster.pallets += p.palletsTotal;
+            asignaciones[p.pedidoId] = { dia: d, vehiculoId: v.id };
+            noAsignado.delete(p.pedidoId);
+            colocado = true;
+          } else {
+            vIdx = (vIdx + 1) % vehiculosHoy.length; // este vehículo ya no tiene hueco, probar el siguiente
+          }
+        }
+        // Si no cupo y era su último día, se queda sin asignar (aparecerá en "sin encajar")
+      });
+
+      // Fase 2: rellenar el hueco que sobre con pedidos que aún tienen margen,
+      // solo si su rumbo va realmente "de camino" con lo ya cargado (máx. 45º de diferencia)
+      vehiculosHoy.forEach(v => {
+        const cluster = clusters[d][v.id];
+        let sigueCambiando = true;
+        while (sigueCambiando) {
+          sigueCambiando = false;
+          let mejor = null, mejorDiff = Infinity;
+          tier2.forEach(p => {
+            if (!noAsignado.has(p.pedidoId)) return;
+            if (cluster.pallets + p.palletsTotal > v.capacidadPallets) return;
+            const diff = cluster.pedidos.length ? angularDiff(bearingPromedio(cluster.pedidos), p._bearing) : 0;
+            if (diff < mejorDiff) { mejorDiff = diff; mejor = p; }
+          });
+          if (mejor && mejorDiff <= 45) {
+            cluster.pedidos.push(mejor);
+            cluster.pallets += mejor.palletsTotal;
+            asignaciones[mejor.pedidoId] = { dia: d, vehiculoId: v.id };
+            noAsignado.delete(mejor.pedidoId);
+            sigueCambiando = true;
+          }
+        }
+      });
+    });
+
+    sinEncajar = pedidos.filter(p => noAsignado.has(p.pedidoId));
+
+    renderCalendario(clusters, fechasPorDia);
+    calculado = true;
+    el('confirmarBtn').disabled = false;
+    setStatus2(`Propuesta calculada. ${sinEncajar.length} pedido(s) sin encajar.`, sinEncajar.length ? 'err' : 'ok');
+  } catch (err) {
+    setStatus2('Error: ' + err.message, 'err');
+  } finally {
+    el('calcularBtn').disabled = false;
+  }
+}
+
+function renderCalendario(clusters, fechasPorDia) {
+  const cal = el('calendar');
+  cal.innerHTML = '';
+  DIAS.forEach(d => {
+    const col = document.createElement('div');
+    col.className = 'day-col';
+    const fecha = fechasPorDia[d];
+    let html = `<h3>${DIAS_NOMBRE[d]} · ${fecha.toLocaleDateString('es-ES', {day:'2-digit', month:'2-digit'})}</h3>`;
+    flota.forEach(v => {
+      const cluster = clusters[d][v.id];
+      const pct = Math.min(100, Math.round((cluster.pallets / v.capacidadPallets) * 100));
+      html += `<div class="vehicle-block">
+        <div class="vname"><span>${v.tipo} (${v.id})</span><span>${cluster.pallets}/${v.capacidadPallets} pal.</span></div>
+        <div class="capacity-bar ${pct >= 100 ? 'full' : ''}"><div style="width:${pct}%"></div></div>`;
+      cluster.pedidos.forEach(p => {
+        html += `<div class="pedido-card">
+          <div class="cli">${p.cliente}</div>
+          <div class="meta">${p.pedidoId} · ${p.palletsTotal} pal. · CP ${p.cp}</div>
+          <div class="meta" style="font-style:italic;">📍 ${p._label || '(sin geocodificar)'} · rumbo ${Math.round(p._bearing)}°</div>
+          <select onchange="reasignar('${p.pedidoId}', this.value)">
+            ${generarOpcionesReasignacion(p, d, v.id)}
+          </select>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+    col.innerHTML = html;
+    cal.appendChild(col);
+  });
+
+  // Sin encajar
+  const sinCard = el('sinEncajarCard');
+  const sinList = el('sinEncajarList');
+  if (sinEncajar.length) {
+    sinCard.style.display = 'block';
+    sinList.innerHTML = sinEncajar.map(p => `
+      <div class="pedido-card">
+        <div class="cli">${p.cliente}</div>
+        <div class="meta">${p.pedidoId} · ${p.palletsTotal} pal. · CP ${p.cp} · límite ${p.fechaLimiteTransporte}</div>
+      </div>
+    `).join('');
+  } else {
+    sinCard.style.display = 'none';
+  }
+}
+
+function generarOpcionesReasignacion(p, diaActual, vehActual) {
+  let opts = '';
+  DIAS.forEach(d => {
+    flota.forEach(v => {
+      const selected = (d === diaActual && v.id === vehActual) ? 'selected' : '';
+      opts += `<option value="${d}|${v.id}" ${selected}>${DIAS_NOMBRE[d]} · ${v.tipo}</option>`;
+    });
+  });
+  return opts;
+}
+
+function reasignar(pedidoId, valor) {
+  const [dia, vehiculoId] = valor.split('|');
+  asignaciones[pedidoId] = { dia, vehiculoId };
+  setStatus2('Reasignado manualmente. Vuelve a "Calcular propuesta" para recalcular desde cero, o confirma así.', 'ok');
+}
+
+// --- Confirmación: escribe en la List vía webhook ---
+async function confirmarSemana() {
+  const webhookUrl = el('webhookUrl').value.trim();
+  const lunes = new Date(el('lunesSemana').value + 'T00:00:00');
+  const fechasPorDia = {};
+  DIAS.forEach((d, i) => { const f = new Date(lunes); f.setDate(lunes.getDate() + i); fechasPorDia[d] = f; });
+
+  if (!webhookUrl) {
+    setStatus2('Sin webhook configurado: no se envía nada a la List (modo prueba).', 'ok');
+    return;
+  }
+
+  el('confirmarBtn').disabled = true;
+  let enviados = 0, errores = 0;
+  for (const p of pedidos) {
+    const asign = asignaciones[p.pedidoId];
+    if (!asign) continue; // los "sin encajar" no se envían
+    const payload = {
+      pedidoId: p.pedidoId,
+      fechaTransporte: fechasPorDia[asign.dia].toISOString().slice(0, 10),
+      vehiculo: asign.vehiculoId,
+      estado: 'Programado'
+    };
+    try {
+      const res = await fetch(webhookUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      enviados++;
+    } catch { errores++; }
+  }
+  setStatus2(`Confirmado: ${enviados} pedido(s) enviados a la List${errores ? `, ${errores} con error` : ''}.`, errores ? 'err' : 'ok');
+  el('confirmarBtn').disabled = false;
+}
+
+el('cargarBtn').addEventListener('click', cargarDatos);
+el('calcularBtn').addEventListener('click', calcularPropuesta);
+el('confirmarBtn').addEventListener('click', confirmarSemana);
+
+loadConfig();
+</script>
+
+</body>
+</html>
