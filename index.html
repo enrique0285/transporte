@@ -350,64 +350,73 @@ async function calcularPropuesta() {
     asignaciones = {};
     const noAsignado = new Set(pedidos.map(p => p.pedidoId));
 
-    DIAS.forEach(d => {
-      const fecha = fechasPorDia[d];
-      const vehiculosHoy = flota.filter(v => disponibilidad[v.id] && disponibilidad[v.id].includes(d));
-      if (!vehiculosHoy.length) return;
+    const iniciales = pedidos.filter(p => p.tipo === 'Inicial');
+    const incidencias = pedidos.filter(p => p.tipo !== 'Inicial');
 
-      const candidatosHoy = pedidos.filter(p =>
-        noAsignado.has(p.pedidoId) && fecha >= p._ventana[0] && fecha <= p._ventana[1]
-      );
-      // Tier 1: hoy es su último día posible (no pueden esperar más)
-      const tier1 = candidatosHoy.filter(p => fecha.getTime() === p._ventana[1].getTime());
-      // Tier 2: todavía tienen otro día disponible esta semana
-      const tier2 = candidatosHoy.filter(p => fecha.getTime() !== p._ventana[1].getTime());
-      tier1.sort((a, b) => a._bearing - b._bearing);
-      tier2.sort((a, b) => a._bearing - b._bearing);
+    // --- Fase 1: solo los Iniciales compiten por hueco ---
+    // Se procesan primero los más urgentes (última oportunidad más próxima),
+    // y para cada uno se prueba primero el día MÁS TARDÍO de su ventana (lo más
+    // cerca posible del límite = menos días con la cocina en casa del cliente),
+    // retrocediendo a días más tempranos solo si no hay hueco.
+    const inicialesOrdenados = [...iniciales].sort((a, b) => new Date(a.fechaLimiteTransporte) - new Date(b.fechaLimiteTransporte));
 
-      // Fase 1: colocar los urgentes, barriendo por rumbo entre los vehículos disponibles hoy
-      let vIdx = 0;
-      tier1.forEach(p => {
-        let colocado = false;
-        for (let tries = 0; tries < vehiculosHoy.length && !colocado; tries++) {
-          const v = vehiculosHoy[(vIdx + tries) % vehiculosHoy.length];
+    inicialesOrdenados.forEach(p => {
+      const limite = new Date(p.fechaLimiteTransporte + 'T00:00:00');
+      const masTarde = restarDiasHabiles(limite, 1);
+      const masTemprano = restarDiasHabiles(limite, 2);
+      const diasVentana = DIAS.filter(d => fechasPorDia[d] >= masTemprano && fechasPorDia[d] <= masTarde)
+                              .sort((d1, d2) => fechasPorDia[d2] - fechasPorDia[d1]); // más tardío primero
+
+      let colocado = false;
+      for (const d of diasVentana) {
+        if (colocado) break;
+        const vehiculosHoy = flota.filter(v => disponibilidad[v.id] && disponibilidad[v.id].includes(d));
+        // entre los vehículos con hueco ese día, elegir el de rumbo más parecido a lo ya cargado
+        let mejorV = null, mejorDiff = Infinity;
+        vehiculosHoy.forEach(v => {
           const cluster = clusters[d][v.id];
-          if (cluster.pallets + p.palletsTotal <= v.capacidadPallets) {
-            cluster.pedidos.push(p);
-            cluster.pallets += p.palletsTotal;
-            asignaciones[p.pedidoId] = { dia: d, vehiculoId: v.id };
-            noAsignado.delete(p.pedidoId);
-            colocado = true;
-          } else {
-            vIdx = (vIdx + 1) % vehiculosHoy.length; // este vehículo ya no tiene hueco, probar el siguiente
-          }
+          if (cluster.pallets + p.palletsTotal > v.capacidadPallets) return;
+          const diff = cluster.pedidos.length ? angularDiff(bearingPromedio(cluster.pedidos), p._bearing) : 0;
+          if (diff < mejorDiff) { mejorDiff = diff; mejorV = v; }
+        });
+        if (mejorV) {
+          const cluster = clusters[d][mejorV.id];
+          cluster.pedidos.push(p);
+          cluster.pallets += p.palletsTotal;
+          asignaciones[p.pedidoId] = { dia: d, vehiculoId: mejorV.id };
+          noAsignado.delete(p.pedidoId);
+          colocado = true;
         }
-        // Si no cupo y era su último día, se queda sin asignar (aparecerá en "sin encajar")
-      });
+      }
+    });
 
-      // Fase 2: rellenar el hueco que sobre con pedidos que aún tienen margen,
-      // solo si su rumbo va realmente "de camino" con lo ya cargado (máx. 45º de diferencia)
-      vehiculosHoy.forEach(v => {
-        const cluster = clusters[d][v.id];
-        let sigueCambiando = true;
-        while (sigueCambiando) {
-          sigueCambiando = false;
-          let mejor = null, mejorDiff = Infinity;
-          tier2.forEach(p => {
-            if (!noAsignado.has(p.pedidoId)) return;
-            if (cluster.pallets + p.palletsTotal > v.capacidadPallets) return;
-            const diff = cluster.pedidos.length ? angularDiff(bearingPromedio(cluster.pedidos), p._bearing) : 0;
-            if (diff < mejorDiff) { mejorDiff = diff; mejor = p; }
-          });
-          if (mejor && mejorDiff <= 45) {
-            cluster.pedidos.push(mejor);
-            cluster.pallets += mejor.palletsTotal;
-            asignaciones[mejor.pedidoId] = { dia: d, vehiculoId: v.id };
-            noAsignado.delete(mejor.pedidoId);
-            sigueCambiando = true;
-          }
-        }
+    // --- Fase 2: las incidencias se acoplan a rutas que YA llevan carga, no abren hueco propio ---
+    incidencias.forEach(p => {
+      let diasVentana = DIAS;
+      if (p.fechaLimiteTransporte) {
+        const limite = new Date(p.fechaLimiteTransporte + 'T00:00:00');
+        const masTarde = restarDiasHabiles(limite, 1);
+        const masTemprano = restarDiasHabiles(limite, 2);
+        diasVentana = DIAS.filter(d => fechasPorDia[d] >= masTemprano && fechasPorDia[d] <= masTarde);
+      }
+      let mejorSlot = null, mejorDiff = Infinity;
+      diasVentana.forEach(d => {
+        flota.forEach(v => {
+          const cluster = clusters[d][v.id];
+          if (!cluster.pedidos.length) return; // solo se acopla a rutas que ya tienen carga
+          if (cluster.pallets + p.palletsTotal > v.capacidadPallets) return;
+          const diff = angularDiff(bearingPromedio(cluster.pedidos), p._bearing);
+          if (diff < mejorDiff) { mejorDiff = diff; mejorSlot = { dia: d, vehiculoId: v.id }; }
+        });
       });
+      if (mejorSlot) {
+        const cluster = clusters[mejorSlot.dia][mejorSlot.vehiculoId];
+        cluster.pedidos.push(p);
+        cluster.pallets += p.palletsTotal;
+        asignaciones[p.pedidoId] = mejorSlot;
+        noAsignado.delete(p.pedidoId);
+      }
+      // Si no hay ninguna ruta cargada esa semana dentro de su ventana con hueco, se queda sin encajar
     });
 
     sinEncajar = pedidos.filter(p => noAsignado.has(p.pedidoId));
@@ -439,7 +448,7 @@ function renderCalendario(clusters, fechasPorDia) {
         <div class="capacity-bar ${pct >= 100 ? 'full' : ''}"><div style="width:${pct}%"></div></div>`;
       cluster.pedidos.forEach(p => {
         html += `<div class="pedido-card">
-          <div class="cli">${p.cliente}</div>
+          <div class="cli">${p.cliente} ${p.tipo !== 'Inicial' ? '<span style="color:var(--warn);font-weight:600;">· Incidencia</span>' : ''}</div>
           <div class="meta">${p.pedidoId} · ${p.palletsTotal} pal. · CP ${p.cp}</div>
           <div class="meta" style="font-style:italic;">📍 ${p._label || '(sin geocodificar)'} · rumbo ${Math.round(p._bearing)}°</div>
           <select onchange="reasignar('${p.pedidoId}', this.value)">
