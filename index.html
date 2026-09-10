@@ -258,7 +258,10 @@ async function geocodeDireccion(direccion, apiKey) {
   if (geocodeCache[direccion]) return geocodeCache[direccion];
   const url = `${ORS_GEOCODE}?api_key=${encodeURIComponent(apiKey)}&text=${encodeURIComponent(direccion)}&size=1&boundary.country=ES`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Geocodificación falló para "${direccion}"`);
+  if (!res.ok) {
+    const cuerpo = await res.text().catch(() => '(sin cuerpo)');
+    throw new Error(`Geocodificación falló para "${direccion}" — HTTP ${res.status}: ${cuerpo.slice(0, 300)}`);
+  }
   const data = await res.json();
   if (!data.features || !data.features.length) throw new Error(`No se encontró la dirección: "${direccion}"`);
   const [lon, lat] = data.features[0].geometry.coordinates;
