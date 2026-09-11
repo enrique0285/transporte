@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -65,6 +66,11 @@
   .pedido-card select { width: 100%; font-size: 11px; margin-top: 4px; padding: 3px; border-radius: 4px; border: 1px solid var(--border); }
 
   .sin-encajar { border: 1px solid var(--err); background: #fdf3f1; border-radius: 8px; padding: 10px; }
+  .correccion-item { background: #fdf3f1; border: 1px solid var(--err); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .correccion-item .cli { font-weight: 600; margin-bottom: 4px; }
+  .correccion-item .original { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .correccion-item input { width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 4px; }
+  .correccion-item .cp-input { max-width: 120px; }
   .sin-encajar .pedido-card { border-color: var(--err); }
 
   .summary-line { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
@@ -126,6 +132,15 @@
     <div class="calendar" id="calendar"></div>
   </div>
 
+  <div class="card" id="correccionCard" style="display:none;">
+    <h2>⚠️ Direcciones no encontradas — corrígelas para incluirlas</h2>
+    <div id="correccionLista"></div>
+    <div class="row-actions">
+      <button id="reintentarBtn" onclick="reintentarConCorrecciones()">Reintentar con las correcciones y calcular</button>
+      <button class="secondary" onclick="continuarSinCorregir()">Continuar sin estos pedidos</button>
+    </div>
+  </div>
+
   <div class="card" id="sinEncajarCard" style="display:none;">
     <h2>⚠️ Sin encajar — revisar a mano</h2>
     <div class="sin-encajar" id="sinEncajarList"></div>
@@ -134,6 +149,7 @@
 </main>
 
 <script>
+let fallosGeo = []; // { idx, cliente, address, cp, error }
 const ORS_GEOCODE = 'https://nominatim.openstreetmap.org/search';
 const el = id => document.getElementById(id);
 const statusEl = el('status');
@@ -358,17 +374,32 @@ async function calcularPropuesta() {
 
     setStatus2('Geocodificando direcciones...');
     const avisosGeo = [];
+    fallosGeo = [];
     // Geocodificar todos los pedidos
     for (let i = 0; i < pedidos.length; i++) {
       setStatus2(`Geocodificando ${i + 1}/${pedidos.length}...`);
-      const g = await geocodeDireccion(pedidos[i].direccion, pedidos[i].cp, googleKey);
-      pedidos[i]._coord = g.coord;
-      pedidos[i]._label = g.label;
-      const dist = haversine(depotCoord, g.coord);
-      if (dist > 250) {
-        avisosGeo.push(`"${pedidos[i].cliente}" a ${Math.round(dist)} km del origen (${g.label})`);
+      try {
+        const g = await geocodeDireccion(pedidos[i].direccion, pedidos[i].cp, googleKey);
+        pedidos[i]._coord = g.coord;
+        pedidos[i]._label = g.label;
+        const dist = haversine(depotCoord, g.coord);
+        if (dist > 250) {
+          avisosGeo.push(`"${pedidos[i].cliente}" a ${Math.round(dist)} km del origen (${g.label})`);
+        }
+      } catch (errGeo) {
+        fallosGeo.push({ idx: i, cliente: pedidos[i].cliente, address: pedidos[i].direccion, cp: pedidos[i].cp || '', error: errGeo.message });
       }
     }
+
+    if (fallosGeo.length) {
+      renderCorreccion();
+      el('correccionCard').style.display = 'block';
+      el('calendar').innerHTML = '<div class="summary-line">Corrige las direcciones señaladas arriba antes de continuar, o pulsa "Continuar sin estos pedidos".</div>';
+      setStatus2(`${fallosGeo.length} dirección(es) no encontrada(s) — corrígelas arriba.`, 'err');
+      el('calcularBtn').disabled = false;
+      return;
+    }
+    el('correccionCard').style.display = 'none';
 
     // Calcular ventana elegible (días hábiles) por pedido
     pedidos.forEach(p => {
@@ -572,6 +603,36 @@ async function confirmarSemana() {
 }
 
 el('cargarBtn').addEventListener('click', cargarDatos);
+function renderCorreccion() {
+  const cont = el('correccionLista');
+  cont.innerHTML = fallosGeo.map((f, i) => `
+    <div class="correccion-item">
+      <div class="cli">${f.cliente || 'Sin nombre'}</div>
+      <div class="original">No encontrada: "${f.address}" — ${f.error}</div>
+      <input type="text" id="fix-dir-${i}" value="${f.address.replace(/"/g, '&quot;')}" placeholder="Dirección corregida">
+      <input type="text" id="fix-cp-${i}" class="cp-input" value="${f.cp}" placeholder="CP">
+    </div>
+  `).join('');
+}
+
+async function reintentarConCorrecciones() {
+  for (let i = 0; i < fallosGeo.length; i++) {
+    const nuevaDireccion = el(`fix-dir-${i}`).value.trim();
+    const nuevoCp = el(`fix-cp-${i}`).value.trim();
+    pedidos[fallosGeo[i].idx].direccion = nuevaDireccion;
+    pedidos[fallosGeo[i].idx].cp = nuevoCp;
+  }
+  await calcularPropuesta();
+}
+
+function continuarSinCorregir() {
+  const idsAExcluir = new Set(fallosGeo.map(f => f.idx));
+  pedidos = pedidos.filter((p, i) => !idsAExcluir.has(i));
+  fallosGeo = [];
+  el('correccionCard').style.display = 'none';
+  calcularPropuesta();
+}
+
 el('calcularBtn').addEventListener('click', calcularPropuesta);
 el('confirmarBtn').addEventListener('click', confirmarSemana);
 
