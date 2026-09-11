@@ -335,7 +335,17 @@ async function geocode(address) {
   if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
   const data = await res.json();
   if (!data.length) throw new Error(`No se encontró la dirección: "${address}"`);
-  return [parseFloat(data[0].lon), parseFloat(data[0].lat)];
+  return { coord: [parseFloat(data[0].lon), parseFloat(data[0].lat)], label: data[0].display_name || address };
+}
+
+// Distancia en línea recta (km) — solo para el control de sensatez, no para la ruta real
+function distanciaSospechosa(a, b) {
+  const R = 6371;
+  const [lon1, lat1] = a, [lon2, lat2] = b;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const x = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
 }
 
 // --- Decodificador de polyline (precisión 5, formato usado por ORS) ---
@@ -395,9 +405,11 @@ async function calcularRuta() {
   if (!paradasRaw.length) { setStatus('No hay paradas para calcular.', 'err'); return; }
 
   el('calcularBtn').disabled = true;
+  const avisos = [];
   try {
     setStatus('Geocodificando origen...');
-    const origenCoord = await geocode(origenDireccion);
+    const gOrigen = await geocode(origenDireccion);
+    const origenCoord = gOrigen.coord;
     await new Promise(r => setTimeout(r, 1100)); // Nominatim: máx. 1 petición/seg
 
     setStatus(`Geocodificando ${paradasRaw.length} direcciones...`);
@@ -405,8 +417,13 @@ async function calcularRuta() {
     for (let i = 0; i < paradasRaw.length; i++) {
       const p = paradasRaw[i];
       setStatus(`Geocodificando ${i + 1}/${paradasRaw.length}: ${p.direccion}`);
-      const coord = await geocode(p.direccion);
-      jobs.push({ id: i, location: coord });
+      const g = await geocode(p.direccion);
+      p._label = g.label;
+      const dist = distanciaSospechosa(origenCoord, g.coord);
+      if (dist > 250) {
+        avisos.push(`⚠️ "${p.cliente || p.direccion}" ha caído a ${Math.round(dist)} km del origen (${g.label}) — revisa la dirección, puede ser un error de geocodificación.`);
+      }
+      jobs.push({ id: i, location: g.coord });
       if (i < paradasRaw.length - 1) await new Promise(r => setTimeout(r, 1100));
     }
 
@@ -431,7 +448,11 @@ async function calcularRuta() {
     const data = await res.json();
     const route = data.routes[0];
     renderResultado(route, origenCoord, origenDireccion, jobs);
-    setStatus('Ruta calculada correctamente.', 'ok');
+    if (avisos.length) {
+      setStatus('Ruta calculada, pero revisa esto: ' + avisos.join(' | '), 'err');
+    } else {
+      setStatus('Ruta calculada correctamente.', 'ok');
+    }
   } catch (err) {
     setStatus('Error: ' + err.message, 'err');
   } finally {
@@ -475,6 +496,7 @@ function renderResultado(route, origenCoord, origenDireccion, jobs) {
         <div class="stop-info">
           <div class="cliente">${p.cliente || 'Sin nombre'} ${p.pedidoId ? `· ${p.pedidoId}` : ''}</div>
           <div class="direccion">${p.direccion}</div>
+          <div class="meta" style="font-style:italic;">📍 ${p._label || ''}</div>
           ${p.horario ? `<div class="meta" style="font-weight:600;color:var(--brand);">🕐 ${p.horario}</div>` : ''}
           <div class="meta">
             ${p.telefono ? `<a class="tel" href="tel:${p.telefono}">${p.telefono}</a> · ` : ''}
@@ -665,4 +687,3 @@ loadConfig();
 
 </body>
 </html>
-
