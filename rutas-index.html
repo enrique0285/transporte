@@ -225,6 +225,11 @@
   .stop-form .form-actions button.secondary { padding: 6px 10px; font-size: 12px; }
   .stop-sending { font-size: 12px; color: var(--muted); }
   .thumb-preview { max-width: 100px; max-height: 100px; border-radius: 6px; margin-top: 6px; display: block; }
+  .correccion-item { background: #fdf3f1; border: 1px solid var(--err); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .correccion-item .cli { font-weight: 600; margin-bottom: 4px; }
+  .correccion-item .original { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .correccion-item input { width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 4px; }
+  .correccion-item .cp-input { max-width: 120px; }
 </style>
 </head>
 <body>
@@ -289,6 +294,15 @@
     <div id="map"></div>
   </div>
 
+  <div class="card" id="correccionCard" style="display:none;">
+    <h2>⚠️ Direcciones no encontradas — corrígelas para incluirlas en la ruta</h2>
+    <div id="correccionLista"></div>
+    <div class="row-actions">
+      <button id="reintentarBtn" onclick="reintentarConCorrecciones()">Reintentar con las correcciones y calcular ruta</button>
+      <button class="secondary" onclick="continuarSinCorregir()">Continuar sin estas paradas</button>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Orden de reparto</h2>
     <div id="stopsContainer"><div class="empty">Configura la clave API y el Gist, luego pulsa "Calcular ruta optimizada".</div></div>
@@ -298,6 +312,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+let fallosGeo = []; // { idx, address, cp }
 const ORS_GEOCODE = 'https://nominatim.openstreetmap.org/search';
 const ORS_OPTIMIZE = 'https://api.heigit.org/vroom/v0';
 
@@ -334,18 +349,48 @@ function setStatus(msg, type) {
 
 el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
-// --- Geocodificación con ORS Pelias ---
-async function geocode(address, cp, googleKey) {
-  const calleSola = address.split(',')[0].trim();
-  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(calleSola)}&key=${encodeURIComponent(googleKey)}`;
+// --- Geocodificación con Google, con limpieza y reintento progresivo ---
+
+// Quita detalles de portal/piso/puerta que no aportan nada a la búsqueda de la calle
+// y que a veces vienen con caracteres corruptos (ej. "4∫A" en vez de "4ºA")
+function limpiarCalle(texto) {
+  return texto
+    .replace(/\b(portal|bloque|piso|puerta|esc\.?|escalera|pta\.?)\s*[\wº∫°]*/gi, '')
+    .replace(/\d+\s*[º∫°]\s*[a-zA-Z]?/g, '') // "4∫A", "3ºB", etc.
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+async function intentarGeocode(texto, cp, googleKey) {
+  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(texto)}&key=${encodeURIComponent(googleKey)}`;
   if (cp) url += `&components=postal_code:${encodeURIComponent(cp)}|country:ES`;
   else url += `&region=es`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
-  const data = await res.json();
-  if (data.status !== 'OK' || !data.results.length) throw new Error(`No se encontró la dirección: "${address}" (${data.status}${data.error_message ? ': ' + data.error_message : ''})`);
-  const loc = data.results[0].geometry.location;
-  return { coord: [loc.lng, loc.lat], label: data.results[0].formatted_address || address };
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function geocode(address, cp, googleKey) {
+  const calleCompleta = address.split(',')[0].trim();
+  const calleLimpia = limpiarCalle(calleCompleta);
+
+  // Intento 1: la calle tal cual viene. Intento 2 (solo si falla): versión limpia sin portal/piso/puerta.
+  const intentos = calleLimpia && calleLimpia !== calleCompleta ? [calleCompleta, calleLimpia] : [calleCompleta];
+
+  let ultimoError = null;
+  for (const texto of intentos) {
+    try {
+      const data = await intentarGeocode(texto, cp, googleKey);
+      if (data.status === 'OK' && data.results.length) {
+        const loc = data.results[0].geometry.location;
+        return { coord: [loc.lng, loc.lat], label: data.results[0].formatted_address || address };
+      }
+      ultimoError = `${data.status}${data.error_message ? ': ' + data.error_message : ''}`;
+    } catch (e) {
+      ultimoError = e.message;
+    }
+  }
+  throw new Error(`No se encontró la dirección: "${address}" (${ultimoError})`);
 }
 
 // Distancia en línea recta (km) — solo para el control de sensatez, no para la ruta real
@@ -417,6 +462,8 @@ async function calcularRuta() {
   if (!paradasRaw.length) { setStatus('No hay paradas para calcular.', 'err'); return; }
 
   el('calcularBtn').disabled = true;
+  el('resultCard').style.display = 'none';
+  el('stopsContainer').innerHTML = '<div class="empty">Calculando ruta nueva...</div>';
   const avisos = [];
   try {
     setStatus('Geocodificando origen...');
@@ -425,17 +472,32 @@ async function calcularRuta() {
 
     setStatus(`Geocodificando ${paradasRaw.length} direcciones...`);
     const jobs = [];
+    fallosGeo = [];
     for (let i = 0; i < paradasRaw.length; i++) {
       const p = paradasRaw[i];
       setStatus(`Geocodificando ${i + 1}/${paradasRaw.length}: ${p.direccion}`);
-      const g = await geocode(p.direccion, p.cp, googleKey);
-      p._label = g.label;
-      const dist = distanciaSospechosa(origenCoord, g.coord);
-      if (dist > 250) {
-        avisos.push(`⚠️ "${p.cliente || p.direccion}" ha caído a ${Math.round(dist)} km del origen (${g.label}) — revisa la dirección, puede ser un error de geocodificación.`);
+      try {
+        const g = await geocode(p.direccion, p.cp, googleKey);
+        p._label = g.label;
+        const dist = distanciaSospechosa(origenCoord, g.coord);
+        if (dist > 250) {
+          avisos.push(`⚠️ "${p.cliente || p.direccion}" ha caído a ${Math.round(dist)} km del origen (${g.label}) — revisa la dirección, puede ser un error de geocodificación.`);
+        }
+        jobs.push({ id: i, location: g.coord });
+      } catch (errGeo) {
+        fallosGeo.push({ idx: i, cliente: p.cliente, address: p.direccion, cp: p.cp || '', error: errGeo.message });
       }
-      jobs.push({ id: i, location: g.coord });
     }
+
+    if (fallosGeo.length) {
+      renderCorreccion();
+      el('correccionCard').style.display = 'block';
+      el('stopsContainer').innerHTML = '<div class="empty">Corrige las direcciones señaladas arriba antes de continuar, o pulsa "Continuar sin estas paradas".</div>';
+      setStatus(`${fallosGeo.length} dirección(es) no encontrada(s) — corrígelas arriba.`, 'err');
+      el('calcularBtn').disabled = false;
+      return;
+    }
+    el('correccionCard').style.display = 'none';
 
     setStatus('Calculando ruta óptima...');
     const vehicle = {
@@ -465,6 +527,7 @@ async function calcularRuta() {
     }
   } catch (err) {
     setStatus('Error: ' + err.message, 'err');
+    el('stopsContainer').innerHTML = `<div class="empty">❌ No se pudo calcular la ruta. ${err.message}</div>`;
   } finally {
     el('calcularBtn').disabled = false;
   }
@@ -689,6 +752,37 @@ async function enviarEstado(stopKey, jobIndex) {
   }
 }
 
+function renderCorreccion() {
+  const cont = el('correccionLista');
+  cont.innerHTML = fallosGeo.map((f, i) => `
+    <div class="correccion-item">
+      <div class="cli">${f.cliente || 'Sin nombre'}</div>
+      <div class="original">No encontrada: "${f.address}" — ${f.error}</div>
+      <input type="text" id="fix-dir-${i}" value="${f.address.replace(/"/g, '&quot;')}" placeholder="Dirección corregida">
+      <input type="text" id="fix-cp-${i}" class="cp-input" value="${f.cp}" placeholder="CP">
+    </div>
+  `).join('');
+}
+
+async function reintentarConCorrecciones() {
+  const googleKey = el('googleKey').value.trim();
+  for (let i = 0; i < fallosGeo.length; i++) {
+    const nuevaDireccion = el(`fix-dir-${i}`).value.trim();
+    const nuevoCp = el(`fix-cp-${i}`).value.trim();
+    paradasRaw[fallosGeo[i].idx].direccion = nuevaDireccion;
+    paradasRaw[fallosGeo[i].idx].cp = nuevoCp;
+  }
+  await calcularRuta();
+}
+
+function continuarSinCorregir() {
+  const idsAExcluir = new Set(fallosGeo.map(f => f.idx));
+  paradasRaw = paradasRaw.filter((p, i) => !idsAExcluir.has(i));
+  fallosGeo = [];
+  el('correccionCard').style.display = 'none';
+  calcularRuta();
+}
+
 el('calcularBtn').addEventListener('click', calcularRuta);
 el('recargarBtn').addEventListener('click', async () => { saveConfig(); await cargarParadas(); });
 
@@ -697,4 +791,5 @@ loadConfig();
 
 </body>
 </html>
+
 
