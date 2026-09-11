@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -330,8 +331,9 @@ el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday:
 
 // --- Geocodificación con ORS Pelias ---
 async function geocode(address, cp) {
+  const calleSola = address.split(',')[0].trim(); // solo la calle, sin ciudad, para no confundir la búsqueda estructurada
   const url = cp
-    ? `${ORS_GEOCODE}?format=json&street=${encodeURIComponent(address)}&postalcode=${encodeURIComponent(cp)}&country=España&limit=1`
+    ? `${ORS_GEOCODE}?format=json&street=${encodeURIComponent(calleSola)}&postalcode=${encodeURIComponent(cp)}&country=España&limit=1`
     : `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(address)}&countrycodes=es&limit=1`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
