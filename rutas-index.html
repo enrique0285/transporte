@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -250,6 +249,10 @@
           <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/.../raw/rutas-maderafina.json">
         </div>
         <div class="field">
+          <label>Clave API de Google Geocoding</label>
+          <input type="password" id="googleKey" placeholder="Tu clave de Google Cloud">
+        </div>
+        <div class="field">
           <label>Dirección de origen (almacén/taller)</label>
           <input type="text" id="origenDireccion" placeholder="Consuegra, Toledo, España">
         </div>
@@ -306,6 +309,7 @@ let paradasRaw = [];
 // --- Persistencia local de configuración ---
 function loadConfig() {
   el('orsKey').value = localStorage.getItem('mf_ors_key') || '';
+  el('googleKey').value = localStorage.getItem('mf_google_key') || '';
   el('gistUrl').value = localStorage.getItem('mf_gist_url') || '';
   el('origenDireccion').value = localStorage.getItem('mf_origen') || 'Consuegra, Toledo, España';
   el('idaVuelta').value = localStorage.getItem('mf_idavuelta') || 'si';
@@ -316,6 +320,7 @@ function loadConfig() {
 }
 function saveConfig() {
   localStorage.setItem('mf_ors_key', el('orsKey').value.trim());
+  localStorage.setItem('mf_google_key', el('googleKey').value.trim());
   localStorage.setItem('mf_gist_url', el('gistUrl').value.trim());
   localStorage.setItem('mf_origen', el('origenDireccion').value.trim());
   localStorage.setItem('mf_idavuelta', el('idaVuelta').value);
@@ -330,16 +335,17 @@ function setStatus(msg, type) {
 el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
 // --- Geocodificación con ORS Pelias ---
-async function geocode(address, cp) {
-  const calleSola = address.split(',')[0].trim(); // solo la calle, sin ciudad, para no confundir la búsqueda estructurada
-  const url = cp
-    ? `${ORS_GEOCODE}?format=json&street=${encodeURIComponent(calleSola)}&postalcode=${encodeURIComponent(cp)}&country=España&limit=1`
-    : `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(address)}&countrycodes=es&limit=1`;
+async function geocode(address, cp, googleKey) {
+  const calleSola = address.split(',')[0].trim();
+  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(calleSola)}&key=${encodeURIComponent(googleKey)}`;
+  if (cp) url += `&components=postal_code:${encodeURIComponent(cp)}|country:ES`;
+  else url += `&region=es`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
   const data = await res.json();
-  if (!data.length) throw new Error(`No se encontró la dirección: "${address}"`);
-  return { coord: [parseFloat(data[0].lon), parseFloat(data[0].lat)], label: data[0].display_name || address };
+  if (data.status !== 'OK' || !data.results.length) throw new Error(`No se encontró la dirección: "${address}" (${data.status}${data.error_message ? ': ' + data.error_message : ''})`);
+  const loc = data.results[0].geometry.location;
+  return { coord: [loc.lng, loc.lat], label: data.results[0].formatted_address || address };
 }
 
 // Distancia en línea recta (km) — solo para el control de sensatez, no para la ruta real
@@ -401,10 +407,12 @@ async function cargarParadas() {
 async function calcularRuta() {
   saveConfig();
   const apiKey = el('orsKey').value.trim();
+  const googleKey = el('googleKey').value.trim();
   const origenDireccion = el('origenDireccion').value.trim();
   const idaVuelta = el('idaVuelta').value;
 
-  if (!apiKey) { setStatus('Falta la clave API de OpenRouteService.', 'err'); return; }
+  if (!apiKey) { setStatus('Falta la clave API de OpenRouteService (para calcular la ruta).', 'err'); return; }
+  if (!googleKey) { setStatus('Falta la clave API de Google Geocoding.', 'err'); return; }
   if (!paradasRaw.length) { await cargarParadas(); }
   if (!paradasRaw.length) { setStatus('No hay paradas para calcular.', 'err'); return; }
 
@@ -412,23 +420,21 @@ async function calcularRuta() {
   const avisos = [];
   try {
     setStatus('Geocodificando origen...');
-    const gOrigen = await geocode(origenDireccion);
+    const gOrigen = await geocode(origenDireccion, null, googleKey);
     const origenCoord = gOrigen.coord;
-    await new Promise(r => setTimeout(r, 1100)); // Nominatim: máx. 1 petición/seg
 
     setStatus(`Geocodificando ${paradasRaw.length} direcciones...`);
     const jobs = [];
     for (let i = 0; i < paradasRaw.length; i++) {
       const p = paradasRaw[i];
       setStatus(`Geocodificando ${i + 1}/${paradasRaw.length}: ${p.direccion}`);
-      const g = await geocode(p.direccion, p.cp);
+      const g = await geocode(p.direccion, p.cp, googleKey);
       p._label = g.label;
       const dist = distanciaSospechosa(origenCoord, g.coord);
       if (dist > 250) {
         avisos.push(`⚠️ "${p.cliente || p.direccion}" ha caído a ${Math.round(dist)} km del origen (${g.label}) — revisa la dirección, puede ser un error de geocodificación.`);
       }
       jobs.push({ id: i, location: g.coord });
-      if (i < paradasRaw.length - 1) await new Promise(r => setTimeout(r, 1100));
     }
 
     setStatus('Calculando ruta óptima...');
