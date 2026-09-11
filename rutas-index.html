@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Optimizador de Rutas — Madera Fina</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --brand: #3b2a1f;
+    --brand-light: #6f4e37;
+    --accent: #c8a165;
+    --bg: #f6f3ef;
+    --card: #ffffff;
+    --border: #e2dcd3;
+    --text: #2b241d;
+    --muted: #7a7166;
+    --ok: #3a7d44;
+    --warn: #b8863b;
+    --err: #b3402f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--brand);
+    color: #fff;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  header h1 {
+    font-size: 18px;
+    margin: 0;
+    font-weight: 600;
+  }
+  header .fecha {
+    font-size: 13px;
+    color: var(--accent);
+  }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 640px) {
+    .config-grid { grid-template-columns: 1fr; }
+  }
+  label {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+  }
+  input[type=text], input[type=password] {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  .field { margin-bottom: 8px; }
+  .row-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover { background: var(--brand-light); }
+  button.secondary {
+    background: transparent;
+    color: var(--brand);
+    border: 1px solid var(--border);
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #status {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+  #map {
+    height: 380px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .summary {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .summary div { font-size: 13px; color: var(--muted); }
+  .summary strong { color: var(--text); font-size: 16px; display: block; }
+  ol.stops {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: stop;
+  }
+  ol.stops li {
+    counter-increment: stop;
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+  }
+  ol.stops li:last-child { border-bottom: none; }
+  .stop-num {
+    background: var(--accent);
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .stop-info { flex: 1; }
+  .stop-info .cliente { font-weight: 600; font-size: 14px; }
+  .stop-info .direccion { font-size: 13px; color: var(--muted); }
+  .stop-info .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .stop-info a.tel { color: var(--brand); text-decoration: none; }
+  .stop-badge {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    text-align: right;
+  }
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    text-align: center;
+    padding: 30px 0;
+  }
+  details summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--brand);
+    margin-bottom: 8px;
+  }
+  ol.stops li.done { opacity: .55; }
+  ol.stops li.done .cliente::after { content: " ✓ Entregado"; color: var(--ok); font-weight: 600; }
+  ol.stops li.incident { border-left: 3px solid var(--err); padding-left: 9px; background: #fdf3f1; }
+  ol.stops li.incident .cliente::after { content: " ⚠ Incidencia"; color: var(--err); font-weight: 600; }
+  .stop-main { display: flex; gap: 12px; align-items: flex-start; width: 100%; }
+  .stop-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .stop-actions button {
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .btn-entregado { background: var(--ok); }
+  .btn-entregado:hover { background: #2f6737; }
+  .btn-incidencia { background: var(--err); }
+  .btn-incidencia:hover { background: #93331f; }
+  .stop-form {
+    margin-top: 10px;
+    padding: 10px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .stop-form.open { display: block; }
+  .stop-form textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    margin-bottom: 8px;
+  }
+  .stop-form input[type=file] { font-size: 12px; margin-bottom: 8px; display: block; }
+  .stop-form .form-actions { display: flex; gap: 8px; }
+  .stop-form .form-actions button.secondary { padding: 6px 10px; font-size: 12px; }
+  .stop-sending { font-size: 12px; color: var(--muted); }
+  .thumb-preview { max-width: 100px; max-height: 100px; border-radius: 6px; margin-top: 6px; display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚚 Optimizador de Rutas — Madera Fina</h1>
+  <div class="fecha" id="fechaLabel"></div>
+</header>
+
+<main>
+
+  <div class="card">
+    <details id="configDetails">
+      <summary>⚙️ Configuración (pulsa para ajustar)</summary>
+      <div class="config-grid">
+        <div class="field">
+          <label>Clave API de OpenRouteService</label>
+          <input type="password" id="orsKey" placeholder="Tu API key de openrouteservice.org">
+        </div>
+        <div class="field">
+          <label>URL del Gist (raw JSON) con las paradas del día</label>
+          <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/.../raw/rutas-maderafina.json">
+        </div>
+        <div class="field">
+          <label>Dirección de origen (almacén/taller)</label>
+          <input type="text" id="origenDireccion" placeholder="Consuegra, Toledo, España">
+        </div>
+        <div class="field">
+          <label>¿Vuelve el conductor al origen al final?</label>
+          <select id="idaVuelta" style="width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+            <option value="si">Sí, ruta circular (vuelta al almacén)</option>
+            <option value="no">No, termina en la última parada</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>URL del webhook de Power Automate (marcar entrega/incidencia)</label>
+          <input type="text" id="webhookUrl" placeholder="https://prod-xx.westeurope.logic.azure.com/workflows/.../triggers/manual/paths/invoke?...">
+        </div>
+      </div>
+      <div style="font-size:12px; color:var(--muted); margin-top:6px;">
+        La clave API y la URL del Gist se guardan solo en este navegador (localStorage), no se suben a ningún sitio.
+      </div>
+    </details>
+    <div class="row-actions">
+      <button id="calcularBtn">Calcular ruta optimizada</button>
+      <button class="secondary" id="recargarBtn">Recargar paradas del Gist</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none;">
+    <h2>Resumen de la ruta</h2>
+    <div class="summary">
+      <div><strong id="sumParadas">–</strong>paradas</div>
+      <div><strong id="sumDistancia">–</strong>distancia total</div>
+      <div><strong id="sumTiempo">–</strong>tiempo de conducción</div>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <div class="card">
+    <h2>Orden de reparto</h2>
+    <div id="stopsContainer"><div class="empty">Configura la clave API y el Gist, luego pulsa "Calcular ruta optimizada".</div></div>
+  </div>
+
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const ORS_GEOCODE = 'https://nominatim.openstreetmap.org/search';
+const ORS_OPTIMIZE = 'https://api.heigit.org/vroom/v0';
+
+const el = id => document.getElementById(id);
+const statusEl = el('status');
+let map, routeLayer, markersLayer;
+let paradasRaw = [];
+
+// --- Persistencia local de configuración ---
+function loadConfig() {
+  el('orsKey').value = localStorage.getItem('mf_ors_key') || '';
+  el('gistUrl').value = localStorage.getItem('mf_gist_url') || '';
+  el('origenDireccion').value = localStorage.getItem('mf_origen') || 'Consuegra, Toledo, España';
+  el('idaVuelta').value = localStorage.getItem('mf_idavuelta') || 'si';
+  el('webhookUrl').value = localStorage.getItem('mf_webhook') || '';
+  if (!el('orsKey').value || !el('gistUrl').value) {
+    el('configDetails').open = true;
+  }
+}
+function saveConfig() {
+  localStorage.setItem('mf_ors_key', el('orsKey').value.trim());
+  localStorage.setItem('mf_gist_url', el('gistUrl').value.trim());
+  localStorage.setItem('mf_origen', el('origenDireccion').value.trim());
+  localStorage.setItem('mf_idavuelta', el('idaVuelta').value);
+  localStorage.setItem('mf_webhook', el('webhookUrl').value.trim());
+}
+
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = type || '';
+}
+
+el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+
+// --- Geocodificación con ORS Pelias ---
+async function geocode(address) {
+  const url = `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(address)}&countrycodes=es&limit=1`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
+  const data = await res.json();
+  if (!data.length) throw new Error(`No se encontró la dirección: "${address}"`);
+  return [parseFloat(data[0].lon), parseFloat(data[0].lat)];
+}
+
+// --- Decodificador de polyline (precisión 5, formato usado por ORS) ---
+function decodePolyline(str, precision = 5) {
+  let index = 0, lat = 0, lng = 0, coordinates = [];
+  const factor = Math.pow(10, precision);
+  while (index < str.length) {
+    let shift = 0, result = 0, byte;
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lat += dlat;
+
+    shift = 0; result = 0;
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lng += dlng;
+
+    coordinates.push([lat / factor, lng / factor]);
+  }
+  return coordinates;
+}
+
+// --- Carga de paradas desde el Gist ---
+async function cargarParadas() {
+  const gistUrl = el('gistUrl').value.trim();
+  if (!gistUrl) { setStatus('Falta la URL del Gist.', 'err'); return; }
+  setStatus('Cargando paradas del Gist...');
+  try {
+    const res = await fetch(gistUrl + (gistUrl.includes('?') ? '&' : '?') + 'cachebust=' + Date.now());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    paradasRaw = data.paradas || [];
+    setStatus(`${paradasRaw.length} parada(s) cargada(s) del Gist.`, 'ok');
+  } catch (err) {
+    setStatus('Error cargando el Gist: ' + err.message, 'err');
+    paradasRaw = [];
+  }
+}
+
+// --- Cálculo de la ruta optimizada ---
+async function calcularRuta() {
+  saveConfig();
+  const apiKey = el('orsKey').value.trim();
+  const origenDireccion = el('origenDireccion').value.trim();
+  const idaVuelta = el('idaVuelta').value;
+
+  if (!apiKey) { setStatus('Falta la clave API de OpenRouteService.', 'err'); return; }
+  if (!paradasRaw.length) { await cargarParadas(); }
+  if (!paradasRaw.length) { setStatus('No hay paradas para calcular.', 'err'); return; }
+
+  el('calcularBtn').disabled = true;
+  try {
+    setStatus('Geocodificando origen...');
+    const origenCoord = await geocode(origenDireccion);
+    await new Promise(r => setTimeout(r, 1100)); // Nominatim: máx. 1 petición/seg
+
+    setStatus(`Geocodificando ${paradasRaw.length} direcciones...`);
+    const jobs = [];
+    for (let i = 0; i < paradasRaw.length; i++) {
+      const p = paradasRaw[i];
+      setStatus(`Geocodificando ${i + 1}/${paradasRaw.length}: ${p.direccion}`);
+      const coord = await geocode(p.direccion);
+      jobs.push({ id: i, location: coord });
+      if (i < paradasRaw.length - 1) await new Promise(r => setTimeout(r, 1100));
+    }
+
+    setStatus('Calculando ruta óptima...');
+    const vehicle = {
+      id: 1,
+      profile: 'driving-car',
+      start: origenCoord,
+      end: idaVuelta === 'si' ? origenCoord : jobs[jobs.length - 1].location
+    };
+
+    const body = { jobs, vehicles: [vehicle], geometry: true };
+    const res = await fetch(ORS_OPTIMIZE, {
+      method: 'POST',
+      headers: { 'Authorization': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`ORS Optimization HTTP ${res.status}: ${errBody}`);
+    }
+    const data = await res.json();
+    const route = data.routes[0];
+    renderResultado(route, origenCoord, origenDireccion, jobs);
+    setStatus('Ruta calculada correctamente.', 'ok');
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'err');
+  } finally {
+    el('calcularBtn').disabled = false;
+  }
+}
+
+// --- Renderizado de resultados ---
+function renderResultado(route, origenCoord, origenDireccion, jobs) {
+  el('resultCard').style.display = 'block';
+
+  const distKm = (route.distance / 1000).toFixed(1);
+  const durMin = Math.round(route.duration / 60);
+  const horas = Math.floor(durMin / 60);
+  const mins = durMin % 60;
+
+  el('sumParadas').textContent = paradasRaw.length;
+  el('sumDistancia').textContent = `${distKm} km`;
+  el('sumTiempo').textContent = horas > 0 ? `${horas} h ${mins} min` : `${mins} min`;
+
+  // Orden de paradas según los "steps" de tipo job
+  const jobSteps = route.steps.filter(s => s.type === 'job');
+  const orderedParadas = jobSteps.map(s => paradasRaw[s.job]);
+
+  const container = el('stopsContainer');
+  container.innerHTML = '';
+  const ol = document.createElement('ol');
+  ol.className = 'stops';
+
+  jobSteps.forEach((step, idx) => {
+    const p = paradasRaw[step.job];
+    const stopKey = p.pedidoId || `idx-${step.job}`;
+    const li = document.createElement('li');
+    li.id = `stop-${stopKey}`;
+    const arrivalMin = Math.round(step.arrival / 60);
+    const h = Math.floor(arrivalMin / 60);
+    const m = arrivalMin % 60;
+    li.innerHTML = `
+      <div class="stop-main">
+        <div class="stop-num">${idx + 1}</div>
+        <div class="stop-info">
+          <div class="cliente">${p.cliente || 'Sin nombre'} ${p.pedidoId ? `· ${p.pedidoId}` : ''}</div>
+          <div class="direccion">${p.direccion}</div>
+          ${p.horario ? `<div class="meta" style="font-weight:600;color:var(--brand);">🕐 ${p.horario}</div>` : ''}
+          <div class="meta">
+            ${p.telefono ? `<a class="tel" href="tel:${p.telefono}">${p.telefono}</a> · ` : ''}
+            ${p.notas ? p.notas : ''}
+          </div>
+          <div class="stop-actions">
+            <button class="btn-entregado" onclick="toggleForm('${stopKey}','entregado')">✅ Entregado</button>
+            <button class="btn-incidencia" onclick="toggleForm('${stopKey}','incidencia')">⚠️ Incidencia</button>
+            ${p.decaUrl ? `<button class="secondary" onclick="window.open('${p.decaUrl}','_blank')">📄 DeCA</button>` : ''}
+          </div>
+          <div class="stop-form" id="form-${stopKey}">
+            <textarea id="notas-${stopKey}" placeholder="Notas (obligatorio si es incidencia)"></textarea>
+            <input type="file" id="foto-${stopKey}" accept="image/*" capture="environment">
+            <img class="thumb-preview" id="thumb-${stopKey}" style="display:none;">
+            <div class="form-actions">
+              <button id="enviar-${stopKey}" onclick="enviarEstado('${stopKey}', ${step.job})">Confirmar</button>
+              <button class="secondary" onclick="toggleForm('${stopKey}')">Cancelar</button>
+            </div>
+            <div class="stop-sending" id="sending-${stopKey}"></div>
+          </div>
+        </div>
+        <div class="stop-badge">≈ ${h}h${String(m).padStart(2,'0')} desde salida</div>
+      </div>
+    `;
+    ol.appendChild(li);
+
+    // Previsualización de la foto seleccionada
+    li.querySelector(`#foto-${stopKey}`).addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      const thumb = li.querySelector(`#thumb-${stopKey}`);
+      if (file) {
+        thumb.src = URL.createObjectURL(file);
+        thumb.style.display = 'block';
+      } else {
+        thumb.style.display = 'none';
+      }
+    });
+  });
+  container.appendChild(ol);
+
+  // Mapa
+  if (!map) {
+    map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  }
+  if (routeLayer) map.removeLayer(routeLayer);
+  if (markersLayer) map.removeLayer(markersLayer);
+
+  markersLayer = L.layerGroup().addTo(map);
+  L.marker([origenCoord[1], origenCoord[0]], {
+    icon: L.divIcon({ className: '', html: '<div style="background:#3b2a1f;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;">🏠</div>' })
+  }).bindPopup('Origen: ' + origenDireccion).addTo(markersLayer);
+
+  jobSteps.forEach((step, idx) => {
+    const p = paradasRaw[step.job];
+    const j = jobs[step.job];
+    L.marker([j.location[1], j.location[0]], {
+      icon: L.divIcon({ className: '', html: `<div style="background:#c8a165;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">${idx+1}</div>` })
+    }).bindPopup(`${idx + 1}. ${p.cliente || ''}<br>${p.direccion}`).addTo(markersLayer);
+  });
+
+  if (route.geometry) {
+    const latlngs = decodePolyline(route.geometry);
+    routeLayer = L.polyline(latlngs, { color: '#6f4e37', weight: 4 }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+  } else {
+    map.fitBounds(markersLayer.getBounds(), { padding: [30, 30] });
+  }
+}
+
+let activeFormKey = null;
+let pendingAction = null;
+
+function toggleForm(stopKey, accion) {
+  // Cierra cualquier formulario abierto anteriormente
+  if (activeFormKey && activeFormKey !== stopKey) {
+    document.getElementById(`form-${activeFormKey}`)?.classList.remove('open');
+  }
+  const form = document.getElementById(`form-${stopKey}`);
+  if (!accion) {
+    form.classList.remove('open');
+    activeFormKey = null;
+    return;
+  }
+  pendingAction = accion;
+  form.classList.add('open');
+  activeFormKey = stopKey;
+  const textarea = document.getElementById(`notas-${stopKey}`);
+  textarea.placeholder = accion === 'incidencia'
+    ? 'Describe la incidencia (obligatorio)'
+    : 'Notas (opcional)';
+  form.querySelector('.form-actions button:first-child').textContent =
+    accion === 'incidencia' ? 'Confirmar incidencia' : 'Confirmar entrega';
+}
+
+// Comprime la imagen en el navegador antes de enviarla (máx 1280px, JPEG calidad 0.7)
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      const maxDim = 1280;
+      let { width, height } = img;
+      if (width > height && width > maxDim) { height *= maxDim / width; width = maxDim; }
+      else if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function enviarEstado(stopKey, jobIndex) {
+  const webhookUrl = el('webhookUrl').value.trim();
+  if (!webhookUrl) { alert('Falta configurar la URL del webhook de Power Automate.'); return; }
+
+  const p = paradasRaw[jobIndex];
+  const notas = document.getElementById(`notas-${stopKey}`).value.trim();
+  const fotoInput = document.getElementById(`foto-${stopKey}`);
+  const sendingEl = document.getElementById(`sending-${stopKey}`);
+  const accion = pendingAction;
+
+  if (accion === 'incidencia' && !notas) {
+    alert('Describe la incidencia antes de confirmar.');
+    return;
+  }
+
+  sendingEl.textContent = 'Enviando...';
+  try {
+    let fotoBase64 = null;
+    if (fotoInput.files[0]) {
+      fotoBase64 = await compressImage(fotoInput.files[0]);
+    }
+
+    let geo = null;
+    if (navigator.geolocation) {
+      try {
+        geo = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            () => resolve(null),
+            { timeout: 4000 }
+          );
+        });
+      } catch (e) { geo = null; }
+    }
+
+    const payload = {
+      pedidoId: p.pedidoId || null,
+      cliente: p.cliente || null,
+      direccion: p.direccion || null,
+      estado: accion === 'incidencia' ? 'incidencia' : 'entregado',
+      notas: notas || null,
+      foto: fotoBase64,
+      ubicacion: geo,
+      fecha: new Date().toISOString()
+    };
+
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    sendingEl.textContent = '';
+    const li = document.getElementById(`stop-${stopKey}`);
+    li.classList.remove('done', 'incident');
+    li.classList.add(accion === 'incidencia' ? 'incident' : 'done');
+    toggleForm(stopKey);
+  } catch (err) {
+    sendingEl.textContent = 'Error al enviar: ' + err.message + ' (reintenta)';
+  }
+}
+
+el('calcularBtn').addEventListener('click', calcularRuta);
+el('recargarBtn').addEventListener('click', async () => { saveConfig(); await cargarParadas(); });
+
+loadConfig();
+</script>
+
+</body>
+</html>
