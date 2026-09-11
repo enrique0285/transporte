@@ -329,8 +329,10 @@ function setStatus(msg, type) {
 el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
 // --- Geocodificación con ORS Pelias ---
-async function geocode(address) {
-  const url = `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(address)}&countrycodes=es&limit=1`;
+async function geocode(address, cp) {
+  const url = cp
+    ? `${ORS_GEOCODE}?format=json&street=${encodeURIComponent(address)}&postalcode=${encodeURIComponent(cp)}&country=España&limit=1`
+    : `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(address)}&countrycodes=es&limit=1`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Geocodificación falló para "${address}" (HTTP ${res.status})`);
   const data = await res.json();
@@ -417,7 +419,7 @@ async function calcularRuta() {
     for (let i = 0; i < paradasRaw.length; i++) {
       const p = paradasRaw[i];
       setStatus(`Geocodificando ${i + 1}/${paradasRaw.length}: ${p.direccion}`);
-      const g = await geocode(p.direccion);
+      const g = await geocode(p.direccion, p.cp);
       p._label = g.label;
       const dist = distanciaSospechosa(origenCoord, g.coord);
       if (dist > 250) {
@@ -687,3 +689,4 @@ loadConfig();
 
 </body>
 </html>
+
