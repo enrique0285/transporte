@@ -371,7 +371,7 @@ async function intentarGeocode(texto, cp, googleKey) {
 }
 
 async function geocode(address, cp, googleKey) {
-  const calleCompleta = address.split(',')[0].trim();
+  const calleCompleta = address.replace(/,?\s*España\s*$/i, '').trim(); // quitamos solo el ", España" final, redundante con el country component
   const calleLimpia = limpiarCalle(calleCompleta);
 
   // Intento 1: la calle tal cual viene. Intento 2 (solo si falla): versión limpia sin portal/piso/puerta.
