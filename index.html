@@ -258,26 +258,49 @@ function getDisponibilidadActual() {
   return disponibilidad;
 }
 
-// --- Geocodificación con caché, usando Google Geocoding API ---
-async function geocodeDireccion(direccion, cp, googleKey) {
-  const cacheKey = direccion + '|' + (cp || '');
-  if (geocodeCache[cacheKey]) return geocodeCache[cacheKey];
-  const calleSola = direccion.split(',')[0].trim(); // solo la calle, sin ciudad
-  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(calleSola)}&key=${encodeURIComponent(googleKey)}`;
+// Quita detalles de portal/piso/puerta que no aportan nada a la búsqueda de la calle
+// y que a veces vienen con caracteres corruptos (ej. "4∫A" en vez de "4ºA")
+function limpiarCalle(texto) {
+  return texto
+    .replace(/\b(portal|bloque|piso|puerta|esc\.?|escalera|pta\.?)\s*[\wº∫°]*/gi, '')
+    .replace(/\d+\s*[º∫°]\s*[a-zA-Z]?/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+async function intentarGeocode(texto, cp, googleKey) {
+  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(texto)}&key=${encodeURIComponent(googleKey)}`;
   if (cp) url += `&components=postal_code:${encodeURIComponent(cp)}|country:ES`;
   else url += `&region=es`;
   const res = await fetch(url);
-  if (!res.ok) {
-    const cuerpo = await res.text().catch(() => '(sin cuerpo)');
-    throw new Error(`Geocodificación falló para "${direccion}" — HTTP ${res.status}: ${cuerpo.slice(0, 300)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// --- Geocodificación con caché, usando Google Geocoding API, con reintento progresivo ---
+async function geocodeDireccion(direccion, cp, googleKey) {
+  const cacheKey = direccion + '|' + (cp || '');
+  if (geocodeCache[cacheKey]) return geocodeCache[cacheKey];
+  const calleCompleta = direccion.replace(/,?\s*España\s*$/i, '').trim();
+  const calleLimpia = limpiarCalle(calleCompleta);
+  const intentos = calleLimpia && calleLimpia !== calleCompleta ? [calleCompleta, calleLimpia] : [calleCompleta];
+
+  let ultimoError = null;
+  for (const texto of intentos) {
+    try {
+      const data = await intentarGeocode(texto, cp, googleKey);
+      if (data.status === 'OK' && data.results.length) {
+        const loc = data.results[0].geometry.location;
+        const result = { coord: [loc.lng, loc.lat], label: data.results[0].formatted_address || direccion };
+        geocodeCache[cacheKey] = result;
+        return result;
+      }
+      ultimoError = `${data.status}${data.error_message ? ': ' + data.error_message : ''}`;
+    } catch (e) {
+      ultimoError = e.message;
+    }
   }
-  const data = await res.json();
-  if (data.status !== 'OK' || !data.results.length) throw new Error(`No se encontró la dirección: "${direccion}" (${data.status}${data.error_message ? ': ' + data.error_message : ''})`);
-  const loc = data.results[0].geometry.location;
-  const label = data.results[0].formatted_address || direccion;
-  const result = { coord: [loc.lng, loc.lat], label };
-  geocodeCache[cacheKey] = result;
-  return result;
+  throw new Error(`No se encontró la dirección: "${direccion}" (${ultimoError})`);
 }
 
 function haversine([lon1, lat1], [lon2, lat2]) {
@@ -324,6 +347,8 @@ async function calcularPropuesta() {
   const disponibilidad = getDisponibilidadActual();
 
   el('calcularBtn').disabled = true;
+  el('calendar').innerHTML = '<div class="summary-line">Calculando propuesta nueva...</div>';
+  el('sinEncajarCard').style.display = 'none';
   setStatus2('Geocodificando origen...');
 
   try {
@@ -443,6 +468,7 @@ async function calcularPropuesta() {
     setStatus2(msgFinal, (sinEncajar.length || avisosGeo.length) ? 'err' : 'ok');
   } catch (err) {
     setStatus2('Error: ' + err.message, 'err');
+    el('calendar').innerHTML = `<div class="summary-line">❌ No se pudo calcular. ${err.message}</div>`;
   } finally {
     el('calcularBtn').disabled = false;
   }
@@ -554,6 +580,7 @@ loadConfig();
 
 </body>
 </html>
+
 
 
 
