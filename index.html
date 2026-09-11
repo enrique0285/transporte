@@ -80,6 +80,10 @@
     <h2>Configuración</h2>
     <div class="config-grid">
       <div class="field">
+        <label>Clave API de Google Geocoding</label>
+        <input type="password" id="googleKey" placeholder="Tu clave de Google Cloud">
+      </div>
+      <div class="field">
         <label>URL raw del Gist — gsh-flota.json</label>
         <input type="text" id="flotaUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-flota.json">
       </div>
@@ -147,6 +151,7 @@ const DIAS_NOMBRE = { L: 'Lunes', M: 'Martes', X: 'Miércoles', J: 'Jueves', V: 
 
 // --- Config persistida (solo lo estable: keys y URLs, no la disponibilidad) ---
 function loadConfig() {
+  el('googleKey').value = localStorage.getItem('gsh_google_key') || '';
   el('flotaUrl').value = localStorage.getItem('gsh_flota_url') || '';
   el('pedidosUrl').value = localStorage.getItem('gsh_pedidos_url') || '';
   el('webhookUrl').value = localStorage.getItem('gsh_planif_webhook') || '';
@@ -154,6 +159,7 @@ function loadConfig() {
   el('lunesSemana').value = proximoLunes();
 }
 function saveConfig() {
+  localStorage.setItem('gsh_google_key', el('googleKey').value.trim());
   localStorage.setItem('gsh_flota_url', el('flotaUrl').value.trim());
   localStorage.setItem('gsh_pedidos_url', el('pedidosUrl').value.trim());
   localStorage.setItem('gsh_planif_webhook', el('webhookUrl').value.trim());
@@ -252,22 +258,25 @@ function getDisponibilidadActual() {
   return disponibilidad;
 }
 
-// --- Geocodificación con caché (por dirección completa, más fiable que el CP en España) ---
-async function geocodeDireccion(direccion) {
-  if (geocodeCache[direccion]) return geocodeCache[direccion];
-  const url = `${ORS_GEOCODE}?format=json&q=${encodeURIComponent(direccion)}&countrycodes=es&limit=1`;
+// --- Geocodificación con caché, usando Google Geocoding API ---
+async function geocodeDireccion(direccion, cp, googleKey) {
+  const cacheKey = direccion + '|' + (cp || '');
+  if (geocodeCache[cacheKey]) return geocodeCache[cacheKey];
+  const calleSola = direccion.split(',')[0].trim(); // solo la calle, sin ciudad
+  let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(calleSola)}&key=${encodeURIComponent(googleKey)}`;
+  if (cp) url += `&components=postal_code:${encodeURIComponent(cp)}|country:ES`;
+  else url += `&region=es`;
   const res = await fetch(url);
   if (!res.ok) {
     const cuerpo = await res.text().catch(() => '(sin cuerpo)');
     throw new Error(`Geocodificación falló para "${direccion}" — HTTP ${res.status}: ${cuerpo.slice(0, 300)}`);
   }
   const data = await res.json();
-  if (!data.length) throw new Error(`No se encontró la dirección: "${direccion}"`);
-  const lon = parseFloat(data[0].lon);
-  const lat = parseFloat(data[0].lat);
-  const label = data[0].display_name || direccion;
-  const result = { coord: [lon, lat], label };
-  geocodeCache[direccion] = result;
+  if (data.status !== 'OK' || !data.results.length) throw new Error(`No se encontró la dirección: "${direccion}" (${data.status}${data.error_message ? ': ' + data.error_message : ''})`);
+  const loc = data.results[0].geometry.location;
+  const label = data.results[0].formatted_address || direccion;
+  const result = { coord: [loc.lng, loc.lat], label };
+  geocodeCache[cacheKey] = result;
   return result;
 }
 
@@ -305,6 +314,8 @@ function bearingPromedio(pedidosCluster) {
 // --- Cálculo de la propuesta ---
 async function calcularPropuesta() {
   if (!pedidos.length) { setStatus2('No hay pedidos cargados.', 'err'); return; }
+  const googleKey = el('googleKey').value.trim();
+  if (!googleKey) { setStatus2('Falta la clave API de Google Geocoding.', 'err'); return; }
 
   const lunes = new Date(el('lunesSemana').value + 'T00:00:00');
   const fechasPorDia = {};
@@ -317,18 +328,21 @@ async function calcularPropuesta() {
 
   try {
     const origenDireccion = el('origenDireccion').value.trim() || 'Consuegra, Toledo, España';
-    const gOrigen = await geocodeDireccion(origenDireccion);
+    const gOrigen = await geocodeDireccion(origenDireccion, null, googleKey);
     const depotCoord = gOrigen.coord;
-    await new Promise(r => setTimeout(r, 1100)); // Nominatim: máx. 1 petición/seg
 
     setStatus2('Geocodificando direcciones...');
+    const avisosGeo = [];
     // Geocodificar todos los pedidos
     for (let i = 0; i < pedidos.length; i++) {
       setStatus2(`Geocodificando ${i + 1}/${pedidos.length}...`);
-      const g = await geocodeDireccion(pedidos[i].direccion);
+      const g = await geocodeDireccion(pedidos[i].direccion, pedidos[i].cp, googleKey);
       pedidos[i]._coord = g.coord;
       pedidos[i]._label = g.label;
-      if (i < pedidos.length - 1) await new Promise(r => setTimeout(r, 1100));
+      const dist = haversine(depotCoord, g.coord);
+      if (dist > 250) {
+        avisosGeo.push(`"${pedidos[i].cliente}" a ${Math.round(dist)} km del origen (${g.label})`);
+      }
     }
 
     // Calcular ventana elegible (días hábiles) por pedido
@@ -424,7 +438,9 @@ async function calcularPropuesta() {
     renderCalendario(clusters, fechasPorDia);
     calculado = true;
     el('confirmarBtn').disabled = false;
-    setStatus2(`Propuesta calculada. ${sinEncajar.length} pedido(s) sin encajar. [Diagnóstico: ${flota.length} vehículo(s) en flota, ${iniciales.length} Inicial(es), ${incidencias.length} incidencia(s), semana lunes=${el('lunesSemana').value}]`, sinEncajar.length ? 'err' : 'ok');
+    let msgFinal = `Propuesta calculada. ${sinEncajar.length} pedido(s) sin encajar. [Diagnóstico: ${flota.length} vehículo(s) en flota, ${iniciales.length} Inicial(es), ${incidencias.length} incidencia(s), semana lunes=${el('lunesSemana').value}]`;
+    if (avisosGeo.length) msgFinal += ' ⚠️ Revisa geocodificación: ' + avisosGeo.join(' | ');
+    setStatus2(msgFinal, (sinEncajar.length || avisosGeo.length) ? 'err' : 'ok');
   } catch (err) {
     setStatus2('Error: ' + err.message, 'err');
   } finally {
