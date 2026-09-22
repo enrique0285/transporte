@@ -111,7 +111,7 @@
       <summary>⚙️ Configuración (pulsa para ajustar)</summary>
       <div class="field">
         <label>URL del Gist (raw JSON) con las paradas del día</label>
-        <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-rutas-dia.json">
+        <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/enrique0285/1ec48648cb767b0f403adc412d63394f/raw/c800dd9d8cf95a1a91b95a320dba0b3618d2f7cb/gsh-rutas-dia.json">
       </div>
       <div class="field">
         <label>URL del webhook de Power Automate (marcar entrega/incidencia)</label>
@@ -143,9 +143,14 @@ function limpiarUrl(url) {
   return url.replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '').trim();
 }
 
+// Rellena aquí las URLs fijas del Gist y del webhook una vez las tengas — así cualquiera
+// que abra el enlace ve la ruta cargada sin tener que configurar nada.
+const DEFAULT_GIST_URL = '';
+const DEFAULT_WEBHOOK_URL = '';
+
 function loadConfig() {
-  el('gistUrl').value = localStorage.getItem('mf_gist_url') || '';
-  el('webhookUrl').value = localStorage.getItem('mf_webhook') || '';
+  el('gistUrl').value = localStorage.getItem('mf_gist_url') || DEFAULT_GIST_URL;
+  el('webhookUrl').value = localStorage.getItem('mf_webhook') || DEFAULT_WEBHOOK_URL;
   if (!el('gistUrl').value) el('configDetails').open = true;
 }
 function saveConfig() {
@@ -347,10 +352,14 @@ async function enviarEstado(stopKey, idx) {
 el('cargarBtn').addEventListener('click', cargarParadas);
 
 loadConfig();
+if (el('gistUrl').value.trim()) {
+  cargarParadas();
+}
 </script>
 
 </body>
 </html>
+
 
 
 
