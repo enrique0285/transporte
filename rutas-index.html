@@ -42,6 +42,7 @@
   .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
   label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
   input[type=text] { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+  #vehiculoSelect { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
   .field { margin-bottom: 8px; }
   .row-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
   button { background: var(--brand); color: #fff; border: none; padding: 10px 18px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; }
@@ -111,7 +112,7 @@
       <summary>⚙️ Configuración (pulsa para ajustar)</summary>
       <div class="field">
         <label>URL del Gist (raw JSON) con las paradas del día</label>
-        <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/enrique0285/1ec48648cb767b0f403adc412d63394f/raw/c800dd9d8cf95a1a91b95a320dba0b3618d2f7cb/gsh-rutas-dia.json">
+        <input type="text" id="gistUrl" placeholder="https://gist.githubusercontent.com/.../raw/gsh-rutas-dia.json">
       </div>
       <div class="field">
         <label>URL del webhook de Power Automate (marcar entrega/incidencia)</label>
@@ -123,6 +124,10 @@
     </details>
     <div class="row-actions">
       <button id="cargarBtn">Cargar paradas del día</button>
+      <span id="vehiculoField" style="display:none; align-items:center; gap:6px;">
+        <label style="margin:0;">Vehículo:</label>
+        <select id="vehiculoSelect"></select>
+      </span>
       <span id="status"></span>
     </div>
   </div>
@@ -170,6 +175,14 @@ function horaInicioMinutos(horario) {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
+let todasLasParadas = []; // sin filtrar por vehículo
+let vehiculoFijado = null; // viene de ?vehiculo= en la URL, no se puede cambiar desde la interfaz
+
+function getVehiculoDeUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('vehiculo');
+}
+
 async function cargarParadas() {
   saveConfig();
   const gistUrl = limpiarUrl(el('gistUrl').value);
@@ -180,14 +193,49 @@ async function cargarParadas() {
     const res = await fetch(gistUrl + (gistUrl.includes('?') ? '&' : '?') + 'cachebust=' + Date.now());
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    paradasRaw = (data.paradas || []).slice().sort((a, b) => horaInicioMinutos(a.horario) - horaInicioMinutos(b.horario));
-    setStatus(`${paradasRaw.length} parada(s) cargada(s).`, 'ok');
-    renderParadas();
+    todasLasParadas = data.paradas || [];
+    configurarSelectorVehiculo();
+    aplicarFiltroVehiculo();
   } catch (err) {
     setStatus('Error cargando el Gist: ' + err.message, 'err');
     el('stopsContainer').innerHTML = `<div class="empty">❌ No se pudieron cargar las paradas. ${err.message}</div>`;
+    todasLasParadas = [];
     paradasRaw = [];
   }
+}
+
+function configurarSelectorVehiculo() {
+  const vehiculos = [...new Set(todasLasParadas.map(p => p.vehiculo).filter(Boolean))];
+  vehiculoFijado = getVehiculoDeUrl();
+
+  if (vehiculoFijado || vehiculos.length <= 1) {
+    // Enlace dedicado a un vehículo, o solo hay uno en los datos: no hace falta selector
+    el('vehiculoField').style.display = 'none';
+    return;
+  }
+
+  el('vehiculoField').style.display = 'flex';
+  const select = el('vehiculoSelect');
+  select.innerHTML = vehiculos.map(v => `<option value="${v}">${v}</option>`).join('');
+  select.onchange = aplicarFiltroVehiculo;
+}
+
+function aplicarFiltroVehiculo() {
+  let filtradas = todasLasParadas;
+  const vehiculos = [...new Set(todasLasParadas.map(p => p.vehiculo).filter(Boolean))];
+
+  if (vehiculoFijado) {
+    filtradas = todasLasParadas.filter(p => p.vehiculo === vehiculoFijado);
+  } else if (vehiculos.length > 1) {
+    filtradas = todasLasParadas.filter(p => p.vehiculo === el('vehiculoSelect').value);
+  }
+  // Si solo hay un vehículo en los datos (o ninguno tiene el campo), se muestran todas sin filtrar
+
+  paradasRaw = filtradas.slice().sort((a, b) => horaInicioMinutos(a.horario) - horaInicioMinutos(b.horario));
+  const etiquetaVehiculo = vehiculoFijado ? ` — ${vehiculoFijado}` : '';
+  el('fechaLabel').textContent = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }) + etiquetaVehiculo;
+  setStatus(`${paradasRaw.length} parada(s) cargada(s)${etiquetaVehiculo}.`, 'ok');
+  renderParadas();
 }
 
 function renderParadas() {
