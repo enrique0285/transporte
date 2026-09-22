@@ -207,7 +207,7 @@ function renderParadas() {
         <div class="cliente">${p.cliente || 'Sin nombre'} ${p.pedidoId ? `· ${p.pedidoId}` : ''}</div>
         <div class="badges">
           ${p.tipo ? `<span class="badge ${p.tipo === 'Inicial' ? 'badge-inicial' : 'badge-incidencia'}">${p.tipo}</span>` : ''}
-          ${(p.pallets !== undefined && p.pallets !== null) ? `<span class="badge badge-pallets">${p.pallets} pal.</span>` : ''}
+          ${(p.palletsTotal !== undefined && p.palletsTotal !== null) ? `<span class="badge badge-pallets">${p.palletsTotal} pal.</span>` : ''}
           ${p.sinAscensor ? `<span class="badge badge-ascensor">🚫 Sin ascensor</span>` : ''}
         </div>
         <div class="direccion"><a class="maps" href="${mapsUrl}" target="_blank">${p.direccion || ''} ↗</a></div>
